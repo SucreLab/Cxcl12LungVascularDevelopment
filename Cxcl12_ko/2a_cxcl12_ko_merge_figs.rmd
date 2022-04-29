@@ -1,0 +1,270 @@
+
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+cxcl12_ko_merge <- readRDS("./data/20211123_cxcl12_ko_merged_labeled.rds")
+cxcl12_ko_merge$celltype <- as.factor(cxcl12_ko_merge$celltype)
+
+levels(cxcl12_ko_merge$celltype) <- c(
+        "Adventitial Fibroblast",
+        "Alveolar Macrophage",
+        "AT1",
+        "AT2",
+        "aCap",
+        "Ciliated",
+        "Dendritic Cell",
+        "Arterial maEC2", # Was "Distal Arterial Endothelium"
+        "gCap",
+        "Interstitial Macrophage",
+        "Lymphatic",
+        "Alveolar Fibroblast",  # Was Alveolar FB
+        "Mesothelium",
+        "Monocyte",
+        "Myofibroblast",
+        "Pericyte",
+        "Progenitors",
+        "Prolif. gCap",
+        "Arterial maEC1", # Was  "Proximal Arterial Endothelium"
+        "Secretory",
+        "Smooth Muscle",
+        "Adventitial Fibroblast", # Was "Unknown (Ptn+ Prss35+)"
+        "Unknown / Other",
+        "Venous Endothelium",
+        "Wnt2+ Fibroblast")
+
+Idents(cxcl12_ko_merge) <- cxcl12_ko_merge$celltype
+
+
+```
+
+```{r}
+DimPlot(cxcl12_ko_merge, label = TRUE)
+```
+
+```{r}
+immune_marker_genes <- c("Cd79a", "Cd19", "Ms4a1", # B
+                         "Zbtb32", #Zbtb32+ B
+                         "Cd27", "Slamf7", # Plasma
+                         "Cd3e", "Lck", "Cd8a", # Cd8+ T
+                         "Cd4", # Cd4+ T
+                         "Ctla4", # Regulatory T
+                         "Ly6g5b", # Ly6g5b+ T
+                         "Alox5", # Alox5+ Lymphocyte
+                         "Nkg7", "Cxcr6", # NKT
+                         "Klrb1a", "Tyrobp", "Gzma", # NK
+                         "Mki67", "Top2a", "Cdk1", # Prolif NK/T
+                         "Retnlg", "S100a8", "S100a9", # Neutrophil
+                         "Cpa3", "Ms4a2", "Mcpt8", # Basophil
+                         "Marco", "Msr1", "Mcr1", # AM
+                         "Siglech", "Cd300c", "Klk1", # Plasmacytoid Dendritic
+                         "H2-Aa", "Cd24a", "Clec9a", # Myeloid Dendritic Type I
+                         "Sirpa", "Itgam", # Myeloid Dendritic Type II
+                         "Ccr7", # Ccr7+ Dendritic
+                         "C1aq", "Trem2", # Interstitial macrophage
+                         "Cd14", "F13a1", "Ly6c2", # Classical Monocyte
+                         "Emr4", "Itgax", "Treml4" # Nonclassical Monocyte
+                         # Intermediate Monocyte = Cd14+ Ly6c2-
+)
+
+```
+
+
+```{r}
+
+
+epi_fortify %<-% fortify.Seurat(subset(cxcl12_ko_merge, bulk_celltype == "Epithelium"))
+endo_fortify %<-% fortify.Seurat(subset(cxcl12_ko_merge, bulk_celltype == "Endothelium"))
+meso_fortify %<-% fortify.Seurat(subset(cxcl12_ko_merge, bulk_celltype == "Mesenchyme"))
+immune_fortify %<-% fortify.Seurat(subset(cxcl12_ko_merge, bulk_celltype == "Immune"))
+
+all_umap <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = epi_fortify, aes(x = x, y = y, color = celltype), size = .1), dpi = 600) +
+        scale_colour_manual(name = "Epithelium", values = color_category_20, guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=12),
+              legend.title=element_text(size=12),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        new_scale_color() +
+        ggrastr::rasterise(geom_point(data = endo_fortify, aes(x = x, y = y, color = celltype), size = .1), dpi = 600) +
+        scale_colour_manual(name = "Endothelium", values = color_category_20, guide = guide_legend(override.aes = list(size=3), order = 2)) +
+        theme(legend.text=element_markdown(size=12),
+              legend.title=element_text(size=12),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        guides(colour = guide_legend(override.aes = list(size=3))) +
+        new_scale_color() +
+        ggrastr::rasterise(geom_point(data = meso_fortify, aes(x = x, y = y, color = celltype), size = .1), dpi = 600) +
+        scale_colour_manual(name = "Mesenchyme", values = color_category_20, guide = guide_legend(override.aes = list(size=3), order = 3)) +
+        theme(legend.text=element_markdown(size=12),
+              legend.title=element_text(size=12),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        guides(colour = guide_legend(override.aes = list(size=3))) +
+        new_scale_color() +
+        ggrastr::rasterise(geom_point(data = immune_fortify, aes(x = x, y = y, color = celltype), size = .1), dpi = 600) +
+        scale_colour_manual(name = "Immune", values = color_category_20, guide = guide_legend(override.aes = list(size=3), order = 3)) +
+        theme(legend.text=element_markdown(size=12),
+              legend.title=element_text(size=12),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        guides(colour = guide_legend(override.aes = list(size=3))) +
+        labs(x = "UMAP1", y = "UMAP2") #+
+
+
+gridExtra::grid.arrange(egg::set_panel_size(p=all_umap, width=unit(15, "cm"), height=unit(15, "cm")))
+ggsave("./data/figures/all_umap_nolines.pdf",
+       egg::set_panel_size(p=all_umap, width=unit(15, "cm"), height=unit(15, "cm")),
+       dpi = 300, bg = "transparent",
+       width=unit(9, "cm"), height=unit(9, "cm"))
+
+```
+
+```{r}
+het_only <- subset(cxcl12_ko_merge, orig.ident == "het")
+cxcl12_vln <-  VlnPlot(het_only, group.by = "celltype", features = "Cxcl12") + guides(fill = FALSE) +
+  scale_fill_manual(values = color_scanpy_viridis20) + xlab("")
+cxcr4_vln <- VlnPlot(het_only, group.by = "celltype", features = "Cxcr4") + guides(fill = FALSE) +
+  scale_fill_manual(values = color_scanpy_viridis20) + xlab("")
+#VlnPlot(het_only, group.by = "celltype", features = "Ackr3") + guides(fill = FALSE) + scale_fill_manual(values = color_scanpy_viridis20) + xlab("")
+
+ggsave("./data/figures/cxcl12_het_only_vln_cxcl12.pdf", cxcl12_vln)
+ggsave("./data/figures/cxcl12_het_only_vln_cxcr4.pdf", cxcr4_vln)
+```
+
+```{r}
+row_rand <- sample(ncol(cxcl12_ko_merge))
+
+all_umap_genotype <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = fortify.Seurat(cxcl12_ko_merge)[row_rand,], aes(x = x, y = y, color = orig.ident), size = .1), dpi = 600) +
+  scale_colour_manual(name = "Genotype", values = color_scanpy_default, guide = guide_legend(override.aes = list(size=3), order = 1)) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=12),
+        legend.title=element_text(size=12),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent")) +
+  labs(x = "UMAP1", y = "UMAP2")
+
+
+gridExtra::grid.arrange(egg::set_panel_size(p=all_umap_genotype, width=unit(15, "cm"), height=unit(15, "cm")))
+ggsave("./data/figures/all_umap_nolines_genotype.pdf",
+       egg::set_panel_size(p=all_umap_genotype, width=unit(15, "cm"), height=unit(15, "cm")),
+       dpi = 300, bg = "transparent",
+       width=unit(9, "cm"), height=unit(9, "cm"))
+```
+
+
+```{r}
+
+Idents(cxcl12_ko_merge) <- cxcl12_ko_merge$celltype
+
+filename <- "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_markers_v2.rds"
+if (!file.exists(filename)) {
+  merged_wt_vs_ko_markers <- future_lapply(levels(Idents(cxcl12_ko_merge)), function(x){ # Five expression patterns
+
+    obj_celltype <- subset(cxcl12_ko_merge, celltype == x)
+    if (sum(obj_celltype$orig.ident == "ko") < 2 | sum(obj_celltype$orig.ident == "het") < 2){
+      return(data.frame())
+    } else {
+      FindMarkers(obj_celltype, ident.1 = "ko", ident.2 = "het", group.by = "orig.ident", test.use = "MAST")
+    }
+  })
+  names(merged_wt_vs_ko_markers) <- levels(Idents(cxcl12_ko_merge))
+  saveRDS(merged_wt_vs_ko_markers, filename)
+} else {
+  merged_wt_vs_ko_markers <- readRDS(filename)
+}
+
+
+
+wb_markers_names <- levels(Idents(cxcl12_ko_merge))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], merged_wt_vs_ko_markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_markers_v2.xlsx", overwrite = TRUE)
+saveWorkbook(wb_markers, file = "./data/figures/cxcl12_ko/xlsx/S2_Cxcl12_KO_vs_WT.xlsx", overwrite = TRUE)
+```
+
+```{r}
+filename <- "./data/merged_cxcl12ko_markers_v2.rds"
+if (!file.exists(filename)) {
+  markers <- parallelFindAllMarkers(cxcl12_ko_merge)
+  names(markers) <- levels(Idents(cxcl12_ko_merge))
+  saveRDS(markers, filename)
+} else {
+  markers <- readRDS(filename)
+}
+
+wb_markers_names <- levels(Idents(cxcl12_ko_merge))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/merged_cxcl12ko_markers.xlsx", overwrite = TRUE)
+```
+
+
+```{r}
+
+Idents(cxcl12_ko_merge) <- cxcl12_ko_merge$bulk_celltype
+
+filename <- "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_BULK_markers.rds"
+if (!file.exists(filename)) {
+  merged_wt_vs_ko_markers <- future_lapply(levels(Idents(cxcl12_ko_merge)), function(x){ # Five expression patterns
+
+    obj_celltype <- subset(cxcl12_ko_merge, bulk_celltype == x)
+    if (sum(obj_celltype$orig.ident == "ko") < 2 | sum(obj_celltype$orig.ident == "het") < 2){
+      return(data.frame())
+    } else {
+      FindMarkers(obj_celltype, ident.1 = "ko", ident.2 = "het", group.by = "orig.ident", test.use = "MAST")
+    }
+  })
+  names(merged_wt_vs_ko_markers) <- levels(Idents(cxcl12_ko_merge))
+  saveRDS(merged_wt_vs_ko_markers, filename)
+} else {
+  merged_wt_vs_ko_markers <- readRDS(filename)
+}
+
+
+
+wb_markers_names <- levels(Idents(cxcl12_ko_merge))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], merged_wt_vs_ko_markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_BULK_markers.xlsx", overwrite = TRUE)
+saveWorkbook(wb_markers, file = "./data/figures/cxcl12_ko/xlsx/S3_Cxcl12_KO_vs_WT_bulk.xlsx", overwrite = TRUE)
+```

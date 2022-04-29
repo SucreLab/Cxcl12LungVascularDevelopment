@@ -1,0 +1,288 @@
+
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+cxcl12_ko_epi_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_epithelium_labeled.rds")
+cxcl12_ko_endo_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_endothelium_labeled.rds")
+cxcl12_ko_meso_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_mesenchyme_labeled.rds")
+cxcl12_ko_immune_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_immune_labeled.rds")
+
+```
+```{r}
+
+VlnPlot(cxcl12_ko_epi_prelim_relabel, features = c("Ackr3", "Cxcr4"), group.by = "celltype", split.by = "orig.ident")
+VlnPlot(cxcl12_ko_endo_prelim_relabel, features = c("Ackr3", "Cxcr4"), group.by = "celltype", split.by = "orig.ident")
+VlnPlot(cxcl12_ko_meso_prelim_relabel, features = c("Ackr3", "Cxcr4"), group.by = "celltype", split.by = "orig.ident")
+VlnPlot(cxcl12_ko_immune_prelim_relabel, features = c("Ackr3", "Cxcr4"), group.by = "celltype", split.by = "orig.ident")
+
+```
+
+
+```{r}
+Idents(cxcl12_ko_endo_prelim_relabel) <- cxcl12_ko_endo_prelim_relabel$celltype
+
+
+levels(Idents(cxcl12_ko_endo_prelim_relabel)) <- c(
+  "gCap",
+  "Arterial maEC2",
+  "Prolif. gCap",
+  "Unknown / Other",
+  "aCap",
+  "Arterial maEC1",
+  "Venous Endothelium",
+  "Lymphatic"
+)
+
+ko_celltype_order <- c(
+
+  "Arterial maEC1",
+  "Arterial maEC2",
+  "gCap",
+  "Prolif. gCap",
+  "aCap",
+  "Venous Endothelium",
+  "Lymphatic",
+  "Unknown / Other"
+)
+cxcl12_ko_endo_prelim_relabel@meta.data$celltype <- Idents(cxcl12_ko_endo_prelim_relabel)
+
+```
+
+
+```{r}
+
+cluster_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = cxcl12_ko_endo_prelim_relabel, aes(x = x, y = y, color = ordered(celltype, ko_celltype_order)), size = .05), dpi = 600) +
+  scale_colour_manual(name = "Celltype", values = color_category_20,
+                      guide = guide_legend(override.aes = list(size=3), order = 1)) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        plot.title=element_text(size = 18),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent")) +
+  ylab("UMAP2") + xlab("UMAP1")
+
+genotype_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = cxcl12_ko_endo_prelim_relabel, aes(x = x, y = y, color = orig.ident), size = .05), dpi = 600) +
+  scale_colour_manual(name = "Genotype", values = color_scanpy_default,
+                      guide = guide_legend(override.aes = list(size=3), order = 1)) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        plot.title=element_text(size = 18),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent")) +
+  ylab("UMAP2") + xlab("UMAP1")
+
+dir.create("./data/figures/cxcl12_ko/UMAP/", recursive = TRUE)
+gridExtra::grid.arrange(egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/named_clusters.pdf",
+       egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(7.2, "cm"), height=unit(5, "cm"))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=genotype_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/genotype.pdf",
+       egg::set_panel_size(p=genotype_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+```
+
+```{r}
+
+genotype_KO_ONLY_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = subset(cxcl12_ko_endo_prelim_relabel, orig.ident == "ko"), aes(x = x, y = y, color = orig.ident), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Genotype", values = color_scanpy_default[2],
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              plot.title=element_text(size = 18),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+
+genotype_WT_ONLY_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = subset(cxcl12_ko_endo_prelim_relabel, orig.ident == "het"), aes(x = x, y = y, color = orig.ident), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Genotype", values = color_scanpy_default[1],
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              plot.title=element_text(size = 18),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+
+gridExtra::grid.arrange(egg::set_panel_size(p=genotype_KO_ONLY_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/genotype_ko_only.pdf",
+       egg::set_panel_size(p=genotype_KO_ONLY_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=genotype_WT_ONLY_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/genotype_het_only.pdf",
+       egg::set_panel_size(p=genotype_WT_ONLY_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+```
+
+```{r}
+cxcl12_ko_endo_prelim_relabel_wt <- subset(cxcl12_ko_endo_prelim_relabel, orig.ident == "het")
+cxcl12_ko_endo_prelim_relabel_ko <- subset(cxcl12_ko_endo_prelim_relabel, orig.ident == "ko")
+```
+
+```{r}
+gene_of_interest <- "Mki67"
+mki67_ko_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = cxcl12_ko_endo_prelim_relabel_ko,
+                                aes(x = x, y = y, color = GetAssayData(cxcl12_ko_endo_prelim_relabel_ko)[gene_of_interest,]), size = .05),
+                     dpi = 600) +
+  scale_color_viridis(name = "Expression", direction = -1) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent"),
+        plot.title=element_text(face = "italic", size = 18)
+  ) +
+  ylab("UMAP2") + xlab("UMAP1") + ggtitle(paste0("KO - ", gene_of_interest))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=mki67_ko_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/mki67_expression_ko.pdf",
+       egg::set_panel_size(p=mki67_ko_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+gene_of_interest <- "Mki67"
+mki67_het_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = cxcl12_ko_endo_prelim_relabel_wt,
+                                aes(x = x, y = y, color = GetAssayData(cxcl12_ko_endo_prelim_relabel_wt)[gene_of_interest,]), size = .05),
+                     dpi = 600) +
+  scale_color_viridis(name = "Expression", direction = -1) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent"),
+        plot.title=element_text(face = "italic", size = 18)
+  ) +
+  ylab("UMAP2") + xlab("UMAP1") + ggtitle(paste0("Het - ", gene_of_interest))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=mki67_het_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_ko/UMAP/mki67_expression_het.pdf",
+       egg::set_panel_size(p=mki67_het_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+
+group_order <- c("het", "ko")
+freq_table <- prop.table(table(cxcl12_ko_endo_prelim_relabel$celltype, cxcl12_ko_endo_prelim_relabel$orig.ident), margin = 2) * 100
+
+
+
+freq_df <- as.data.frame(freq_table)
+freq_df$Var2 <- ordered(as.factor(freq_df$Var2), group_order)
+freq_df$Va1 <- ordered(as.factor(freq_df$Var1), ko_celltype_order)
+
+celltype_proportions <- ggplot(as.data.frame(freq_table),aes(x=ordered(Var2, group_order),y=Freq,fill=ordered(Var1, ko_celltype_order))) +
+        geom_col() +
+        scale_fill_manual(values = color_category_20, name = "Cell type") +
+        xlab("Condition") +
+        ylab("Cell Proportion") +
+        theme(legend.text = element_markdown(size=12),
+              legend.title = element_text(size=12),
+              axis.text.x  = element_text(size=12, color = "black"),
+              axis.text.y = element_text(size=12, color = "black"),
+              axis.title.x = element_blank(),
+              axis.title.y = element_text(size=12),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent"),
+              aspect.ratio = 1.2) +
+        scale_x_discrete(expand = c(.05, .05)) +
+        scale_y_continuous(expand = c(.01,.01)) +
+        coord_fixed(0.05)
+celltype_proportions
+
+dir.create("./data/figures/cxcl12_ko/bargraph/", recursive = TRUE)
+ggsave("./data/figures/cxcl12_ko/bargraph/celltype_proportions.pdf",
+       celltype_proportions,
+       dpi = 300, bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+```
+
+
+```{r}
+N_WORKERS <- 12
+Idents(data) <- data$predicted.id.rename
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/20211220_epi_transfer_labs_markers_celltype_v4.rds"
+if (!file.exists(filename)) {
+  epi_xfer_markers <- future_lapply(levels(Idents(data)), function(x){ # Five expression patterns
+
+    obj_celltype <- subset(data, predicted.id.rename == x)
+    if (sum(obj_celltype$genotype == "WT") < 2 | sum(obj_celltype$genotype == "B1") < 2){
+      return(data.frame())
+    } else {
+      FindMarkers(data, ident.1 = "WT", ident.2 = "B1", group.by = "genotype", test.use = "MAST")
+    }
+  })
+  names(epi_xfer_markers) <- levels(Idents(data))
+  saveRDS(epi_xfer_markers, filename)
+} else {
+  epi_xfer_markers <- readRDS(filename)
+}
+
+
+
+wb_markers_names <- levels(Idents(data))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], epi_xfer_markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/20211220_epi_transfer_labs_markers_celltype_v4.xlsx", overwrite = TRUE)
+```

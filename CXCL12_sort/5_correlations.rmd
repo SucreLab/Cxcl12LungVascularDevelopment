@@ -1,0 +1,83 @@
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+#renv::activate("~/code/LungVascularDevelopment_github")
+library(Seurat)
+library(tidyverse)
+library(reshape2)
+
+source("./helper_functions/heatmaps.R")
+```
+
+## Load counts
+
+```{r}
+endo_labeled <- readRDS("./data/2021.11.02_cxcl12_enrich_labeled.rds")
+endo_labeled$timepoint <- as.factor(endo_labeled$timepoint)
+levels(endo_labeled$timepoint) <- c("E13.5", "E15.5", "E18.5", "P8")
+endo_labeled$timepoint <- ordered(endo_labeled$timepoint, c("E13.5", "E15.5", "E18.5", "P8"))
+
+```
+
+```{r}
+matrix <- GetAssayData(endo_labeled, assay = "SCT", slot = "scale.data")
+matrix_mod <- as.matrix(matrix)
+gene <- as.numeric(matrix_mod["Cxcl12",])
+correlations <- apply(matrix_mod,1,function(x){cor(gene,x, method = "spearman")})
+#saveRDS(correlations, "./data/cxcl12_correlated_genes_sct_cor.rds")
+
+top_100_cor <- correlations %>% sort() %>% rev() %>% head(100)
+top_cor <- top_100_cor[top_100_cor >= 0.3]
+
+write.csv(correlations %>% sort() %>% rev(), "./data/correlations.csv")
+
+```
+
+```{r}
+ggsave("./data/figures/cxcl12_sort/heatmap/cxcl12_cor.png", DoHeatmap(endo_labeled, features = top_cor %>% names(), label = FALSE))
+ggsave("./data/figures/cxcl12_sort/heatmap/cxcl12_cor.pdf", DoHeatmap(endo_labeled, features = top_cor %>% names(), label = FALSE))
+```
+
+```{r}
+
+marker_genes <- endo_modules$id
+
+
+heatmap_df <- make_heatmap_df(endo_labeled, marker_genes, sort_clusters = FALSE)
+
+heatmap_df$module <- endo_modules_df[heatmap_df$gene,'module']
+
+heatmap_df_summarized <- heatmap_df %>% group_by(module,cluster) %>% summarise(expression_mean=mean(expression))
+
+# For brackets and text (see ./helper_functions/brackets.R)
+n_clusters <- max(as.numeric(Idents(endo_labeled)))
+
+
+all_heatmap <- ggplot(heatmap_df_summarized, aes(x = module, y = cluster, fill = expression_mean)) +
+        geom_tile(color = "white", size = 0.1) +
+        scale_fill_distiller(palette = "Blues", direction = 1, trans = "sqrt", name = "Expression") +
+        coord_fixed(ratio = 1, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        # addBrackets(text_vec) +
+        # addText(text_vec, n_clusters) +
+        theme(panel.background = element_rect(fill = "white", colour = "black", size = 0),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.text.x = element_text(face = "italic", size = 10),
+              axis.text.y = element_text(size = 10)
+        ) +
+        labs(y = "Cluster") +
+        coord_flip() +
+        theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+all_heatmap
+
+```

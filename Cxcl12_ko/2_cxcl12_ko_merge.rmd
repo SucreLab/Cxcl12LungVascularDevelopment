@@ -1,0 +1,108 @@
+
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+cxcl12_ko_epi_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_epithelium_labeled.rds")
+cxcl12_ko_endo_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_endothelium_labeled.rds")
+cxcl12_ko_meso_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_mesenchyme_labeled.rds")
+cxcl12_ko_immune_prelim_relabel <- readRDS("./data/20211123_cxcl12_ko_immune_labeled.rds")
+
+```
+
+```{r}
+cxcl12_ko_merge <- Reduce(function(x,y){merge(x,y)}, list(cxcl12_ko_epi_prelim_relabel,
+                                                          cxcl12_ko_endo_prelim_relabel,
+                                                          cxcl12_ko_meso_prelim_relabel,
+                                                          cxcl12_ko_immune_prelim_relabel
+))
+```
+
+```{r}
+#Idents(cxcl12_ko_merge) <- cxcl12_ko_merge$bulk_celltype
+group_order <- c("het", "ko")
+freq_table <- prop.table(table(cxcl12_ko_merge$bulk_celltype, cxcl12_ko_merge$orig.ident), margin = 2) * 100
+
+
+
+freq_df <- as.data.frame(freq_table)
+
+celltype_proportions <- ggplot(as.data.frame(freq_table),aes(x=Var2,y=Freq,fill=Var1)) +
+  geom_col() +
+  scale_fill_manual(values = color_category_20, name = "Cell type") +
+  xlab("Condition") +
+  ylab("Cell Proportion") +
+  theme(legend.text = element_markdown(size=12),
+        legend.title = element_text(size=12),
+        axis.text.x  = element_text(size=12, color = "black"),
+        axis.text.y = element_text(size=12, color = "black"),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text(size=12),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_rect(fill = "transparent"),
+        aspect.ratio = 1.2) +
+  scale_x_discrete(expand = c(.05, .05)) +
+  scale_y_continuous(expand = c(.01,.01)) +
+  coord_fixed(0.05)
+celltype_proportions
+
+dir.create("./data/figures/cxcl12_ko/bargraph/", recursive = TRUE)
+ggsave("./data/figures/cxcl12_ko/bargraph/celltype_proportions_bulk.pdf",
+       celltype_proportions,
+       dpi = 300, bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+```
+
+
+```{r}
+cxcl12_ko_merge <- SCTransform(cxcl12_ko_merge, variable.features.n = 2000, conserve.memory = TRUE,
+                               batch_var = "orig.ident", vars.to.regress = c("percent.mt"),
+                               method = "glmGamPoi")
+```
+
+```{r}
+cxcl12_ko_merge <- cluster_pca_umap(cxcl12_ko_merge, k_param = 10, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 0.4)
+cluster_plot <- DimPlot(cxcl12_ko_merge, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+celltype_plot <- DimPlot(cxcl12_ko_merge, group.by = "bulk_celltype") + umap_theme() + theme(aspect.ratio = 1)
+genotype_plot <- DimPlot(cxcl12_ko_merge, group.by = "orig.ident") + umap_theme() + theme(aspect.ratio = 1)
+cluster_plot + celltype_plot + genotype_plot
+```
+
+
+
+```{r}
+filename <- "./data/20211123_cxcl12_ko_merged_labeled.rds"
+if (!file.exists(filename)) {
+  saveRDS(cxcl12_ko_merge, filename)
+}
+
+```

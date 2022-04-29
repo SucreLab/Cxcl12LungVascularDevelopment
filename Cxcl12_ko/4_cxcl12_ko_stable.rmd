@@ -1,0 +1,96 @@
+
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+cxcl12_ko_merge <- readRDS("./data/20211123_cxcl12_ko_merged_labeled.rds")
+
+```
+
+```{r}
+DimPlot(cxcl12_ko_merge, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+```
+
+```{r}
+
+Idents(cxcl12_ko_merge) <- cxcl12_ko_merge$celltype
+
+filename <- "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_markers.rds"
+if (!file.exists(filename)) {
+  merged_wt_vs_ko_markers <- future_lapply(levels(Idents(cxcl12_ko_merge)), function(x){ # Five expression patterns
+
+    obj_celltype <- subset(cxcl12_ko_merge, celltype == x)
+    if (sum(obj_celltype$orig.ident == "ko") < 2 | sum(obj_celltype$orig.ident == "het") < 2){
+      return(data.frame())
+    } else {
+      FindMarkers(obj_celltype, ident.1 = "ko", ident.2 = "het", group.by = "orig.ident", test.use = "MAST")
+    }
+  })
+  names(merged_wt_vs_ko_markers) <- levels(Idents(merged_wt_vs_ko_markers))
+  saveRDS(merged_wt_vs_ko_markers, filename)
+} else {
+  merged_wt_vs_ko_markers <- readRDS(filename)
+}
+
+
+
+wb_markers_names <- levels(Idents(cxcl12_ko_merge))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], merged_wt_vs_ko_markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/20211123_cxcl12_ko_merged_labeled_ko_vs_wt_markers.xlsx", overwrite = TRUE)
+saveWorkbook(wb_markers, file = "./data/figures/cxcl12_ko/xlsx/S2_Cxcl12_KO_vs_WT.xlsx", overwrite = TRUE)
+```
+```{r}
+filename <- "./data/merged_cxcl12ko_markers.rds"
+if (!file.exists(filename)) {
+  markers <- parallelFindAllMarkers(cxcl12_ko_merge)
+  names(markers) <- levels(Idents(cxcl12_ko_merge))
+  saveRDS(markers, filename)
+} else {
+  markers <- readRDS(filename)
+}
+
+wb_markers_names <- levels(Idents(cxcl12_ko_merge))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/merged_cxcl12ko_markers.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+FeaturePlot(cxcl12_ko_merge, features = "Pdgfra")
+```

@@ -1,0 +1,548 @@
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+endo_labeled <- readRDS("./data/2021.11.02_cxcl12_enrich_labeled.rds")
+endo_labeled$timepoint <- as.factor(endo_labeled$timepoint)
+levels(endo_labeled$timepoint) <- c("E13.5", "E15.5", "E18.5", "P8")
+endo_labeled$timepoint <- ordered(endo_labeled$timepoint, c("E13.5", "E15.5", "E18.5", "P8"))
+```
+
+```{r}
+# Relabel the celltypes, current order:
+# "General Capillaries (gCap)" #
+# "Distal Arterial Endothelium" #
+# "Prolif. Capillaries (gCap)" #
+# "Car4+ Capillaries" #
+# "Proximal Arterial Endothelium" #
+# "Unknown / Other"
+# "Early Endothelium"
+# "Lymphatic"
+
+levels(Idents(endo_labeled)) <- c(
+  "gCap",
+  "Arterial maEC2",
+  "Prolif. gCap",
+  "aCap",
+  "Arterial maEC1",
+  "Unknown / Other",
+  "Early Endothelium",
+  "Lymphatic"
+)
+
+endo_cds <- SeuratWrappers::as.cell_data_set(endo_labeled)
+saveRDS(endo_cds, "./data/2021.11.02_cxcl12_enrich_labeled_CDS.rds")
+
+```
+
+## Check number of cells at each timepoint
+```{r}
+
+celltype_order <- c(
+  "Arterial maEC1",
+  "Arterial maEC2",
+  "gCap",
+  "Prolif. gCap",
+  "aCap",
+  "Lymphatic",
+  "Early Endothelium",
+  "Unknown / Other"
+)
+
+endo_labeled$name <- Idents(endo_labeled)
+
+```
+
+```{r}
+
+dir.create("./data/figures/cxcl12_sort/xlsx/", recursive = TRUE)
+filename <- "./data/2022.04.06_cxcl12_enrich_labeled_markers_consolidated.rds"
+if (!file.exists(filename)) {
+  markers <- parallelFindAllMarkers(endo_labeled)
+  names(markers) <- levels(Idents(endo_labeled))
+  saveRDS(markers, filename)
+} else {
+  markers <- readRDS(filename)
+}
+
+wb_markers_names <- levels(Idents(endo_labeled))
+wb_markers_names <- gsub("/", "-", wb_markers_names)
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/figures/cxcl12_sort/xlsx/S1_celltype_markers.xlsx", overwrite = TRUE)
+```
+
+```{r}
+n_cxcl12_pos <- sum(GetAssayData(endo_labeled, assay = "RNA")['Cxcl12',] > 0)
+n_cells <- ncol(endo_labeled)
+
+n_cxcl12_pos
+n_cells
+
+(n_cxcl12_pos * 100 / n_cells)
+
+
+```
+
+Create UMAPs
+```{r}
+
+cluster_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = ordered(name, celltype_order)), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Celltype", values = color_category_20,
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              plot.title=element_text(size = 18),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+
+timepoint_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = timepoint), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Timepoint", values = color_category_20,
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              plot.title=element_text(size = 18),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+
+dir.create("./data/figures/cxcl12_sort/UMAP/", recursive = TRUE)
+gridExtra::grid.arrange(egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/named_clusters.pdf",
+       egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(7.2, "cm"), height=unit(5, "cm"))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=timepoint_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/timepoints.pdf",
+       egg::set_panel_size(p=timepoint_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+
+dir.create("./data/figures/cxcl12_sort/xlsx/", recursive = TRUE)
+filename <- "./data/2021.11.02_cxcl12_enrich_labeled_markers.rds"
+if (!file.exists(filename)) {
+  markers <- parallelFindAllMarkers(endo_labeled)
+  saveRDS(markers, filename)
+} else {
+  markers <- readRDS(filename)
+}
+
+wb_markers_names <- levels(Idents(endo_labeled))
+wb_markers_names <- gsub("/", "-", wb_markers_names)
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/figures/cxcl12_sort/xlsx/markers_endo.xlsx", overwrite = TRUE)
+
+```
+
+```{r}
+
+marker_genes <- c(
+        "Gkn3", "Gja5", #Proximal Artery
+        "Cxcl12", "Alox12", #Distal Artery
+        "Gpihbp1", "Ctla2a", # Microvascular
+        "Mki67", "Top2a", # Proliferating miEC
+        "Car4", "Apln", # Car4
+        "Flt4", "Ccl21a", # Lymphatic
+        "Ptn", "Mdk", # Early endothelium
+        "Fabp4", "Fabp5" # Unknown / Other
+        #"Alox12"
+)
+endo_labeled$name_rev <- ordered(endo_labeled$name, rev(celltype_order))
+endo_markers_dotplot <- DotPlot(endo_labeled, features = marker_genes, group.by = "name_rev") +
+        theme(axis.text.x = element_text(angle = 45, hjust=1, face = "italic")) +
+        scale_color_distiller(palette = "Blues", direction = 1) +
+        ylab("") + xlab("")
+endo_markers_dotplot
+
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave("./data/figures/cxcl12_sort/dotplot/labeled_cluster_markers.pdf", endo_markers_dotplot, scale = 0.75)
+```
+
+```{r}
+median(endo_labeled$nCount_SCT)
+quantile(endo_labeled$nCount_SCT)
+
+median(endo_labeled$nFeature_SCT)
+quantile(endo_labeled$nFeature_SCT)
+
+```
+
+```{r}
+
+gene_of_interest <- "Cxcl12"
+cxcl12_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = GetAssayData(endo_labeled)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=cxcl12_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/Cxcl12_expression.pdf",
+       egg::set_panel_size(p=cxcl12_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+
+
+
+
+```{r}
+
+filename <- "./labeled_cellxgene_data.h5ad"
+writeAnnData <- function(seurat_obj, filename){
+  assay <- "RNA"
+  anndata::AnnData(X = t(GetAssayData(seurat_obj, slot = "data", assay = assay)),
+                   var = data.frame(gene = rownames(seurat_obj[[assay]]),
+                                    row.names = rownames(seurat_obj[[assay]])),
+                   obs = data.frame(celltype = seurat_obj$name,
+                                    louvain = seurat_obj$SCT_snn_res.1.2,
+                                    timepoint = as.character(seurat_obj$timepoint),
+                                    row.names = colnames(seurat_obj)),
+                   obsm = list(X_umap = matrix(Embeddings(seurat_obj, reduction = "umap"), ncol = 2))
+  )$write_h5ad(filename, compression = "gzip")
+}
+
+if (!file.exists(filename)) { # Create if doesn't exist
+  writeAnnData(endo_labeled, filename)
+}
+```
+
+# Stacked plots for the cellular proportions over time
+```{r}
+
+
+freq_table <- prop.table(table(endo_labeled$name, endo_labeled$timepoint), margin = 2) * 100
+
+
+
+freq_df <- as.data.frame(freq_table)
+group_order <- levels(endo_labeled$timepoint)
+freq_df$Var2 <- ordered(as.factor(freq_df$Var2), group_order)
+freq_df$Va1 <- ordered(as.factor(freq_df$Var1), celltype_order)
+
+celltype_proportions <- ggplot(as.data.frame(freq_table),aes(x=ordered(Var2, group_order),y=Freq,fill=ordered(Var1, celltype_order))) +
+        geom_col() +
+        scale_fill_manual(values = color_category_20, name = "Cell type") +
+        xlab("Condition") +
+        ylab("Cell Proportion") +
+        theme(legend.text = element_markdown(size=12),
+              legend.title = element_text(size=12),
+              axis.text.x  = element_text(size=12, color = "black"),
+              axis.text.y = element_text(size=12, color = "black"),
+              axis.title.x = element_blank(),
+              axis.title.y = element_text(size=12),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_rect(fill = "transparent"),
+              aspect.ratio = 1.2) +
+        scale_x_discrete(expand = c(.05, .05)) +
+        scale_y_continuous(expand = c(.01,.01)) +
+        coord_fixed(0.05)
+celltype_proportions
+
+dir.create("./data/figures/cxcl12_sort/bargraph/", recursive = TRUE)
+ggsave("./data/figures/cxcl12_sort/bargraph/celltype_proportions.pdf",
+       celltype_proportions,
+       dpi = 300, bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+```
+
+
+```{r}
+
+gene_of_interest <- "Gkn3"
+gkn3_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = GetAssayData(endo_labeled)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=gkn3_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/gkn3_expression.pdf",
+       egg::set_panel_size(p=gkn3_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+
+# Dotplots for single gene in two cell types over time
+
+
+# Cxcl12 dotplot
+```{r}
+
+marker_gene <- "Cxcl12"
+heatmap_df <- make_heatmap_df(endo_labeled, marker_gene, sort_clusters = FALSE)
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E13.5", "E15.5", "E18.5", "P8")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+  geom_point(shape = 16) +
+  scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+  scale_size(range = c(1, 7), name = "% expressing") +
+  coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+  theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+  theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+        plot.title = element_text(face = "italic", size = 18),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.title.x  = element_blank(),
+        axis.title.y  = element_blank(),
+        axis.text.x = element_text(size = 16, color = "black"),
+        axis.text.y = element_text(size = 16, color = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent")
+  ) +
+  labs(x = "Timepoint") +
+         guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+  ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1, height = 5, width = 8, bg = "transparent")
+```
+
+# Cxcr4 dotplot
+```{r}
+
+marker_gene <- "Cxcr4"
+heatmap_df <- make_heatmap_df(endo_labeled, marker_gene, sort_clusters = FALSE)
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E13.5", "E15.5", "E18.5", "P8")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 16) +
+        scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+        scale_size(range = c(1, 7), name = "% expressing") +
+        coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+              plot.title = element_text(face = "italic", size = 18),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.title.y  = element_blank(),
+              axis.text.x = element_text(size = 16, color = "black"),
+              axis.text.y = element_text(size = 16, color = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")
+        ) +
+        labs(x = "Timepoint") +
+        guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+        ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1, height = 5, width = 8, bg = "transparent")
+```
+
+# Ackr3 dotplot
+```{r}
+
+marker_gene <- "Ackr3"
+heatmap_df <- make_heatmap_df(endo_labeled, marker_gene, sort_clusters = FALSE)
+
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E13.5", "E15.5", "E18.5", "P8")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 16) +
+        scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+        scale_size(range = c(1, 7), name = "% expressing") +
+        coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+              plot.title = element_text(face = "italic", size = 18),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.title.y  = element_blank(),
+              axis.text.x = element_text(size = 16, color = "black"),
+              axis.text.y = element_text(size = 16, color = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")
+        ) +
+        labs(x = "Timepoint") +
+        guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+        ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1, height = 5, width = 8, bg = "transparent")
+```
+
+
+```{r}
+
+gene_of_interest <- "Alox12"
+alox12_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = GetAssayData(endo_labeled)[gene_of_interest,]), size = .05),
+                     dpi = 600) +
+  scale_color_viridis(name = "Expression", direction = -1) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent"),
+        plot.title=element_text(face = "italic", size = 18)
+  ) +
+  ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=alox12_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/alox12_expression.pdf",
+       egg::set_panel_size(p=alox12_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+gene_of_interest <- "Ackr3"
+ackr3_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = GetAssayData(endo_labeled)[gene_of_interest,]), size = .05),
+                     dpi = 600) +
+  scale_color_viridis(name = "Expression", direction = -1) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent"),
+        plot.title=element_text(face = "italic", size = 18)
+  ) +
+  ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=ackr3_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/ackr3_expression.pdf",
+       egg::set_panel_size(p=ackr3_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+gene_of_interest <- "Cxcr4"
+cxcr4_plot <- ggplot() + umap_theme() +
+  ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = GetAssayData(endo_labeled)[gene_of_interest,]), size = .05),
+                     dpi = 600) +
+  scale_color_viridis(name = "Expression", direction = -1) +
+  theme(aspect.ratio=1,
+        legend.text=element_text(size=14),
+        legend.title=element_text(size=14),
+        axis.title=element_text(size = 14),
+        panel.background = element_rect(fill = "transparent", colour = "black"),
+        plot.background = element_rect(color = "transparent", fill = "transparent"),
+        plot.title=element_text(face = "italic", size = 18)
+  ) +
+  ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=cxcr4_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/cxcr4_expression.pdf",
+       egg::set_panel_size(p=cxcr4_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+endo_labeled_venous <- subset(endo_labeled, name %in% c("Arterial maEC1", "Arterial maEC2"))
+```
+
+```{r}
+names(markers) <- levels(Idents(endo_labeled))
+maEC1_markers <- markers[["Arterial maEC1"]] %>% filter(p_val_adj < 0.05 & avg_logFC > 0.6)
+maEC2_markers <- markers[["Arterial maEC2"]] %>% filter(p_val_adj < 0.05 & avg_logFC > 0.6)
+
+differential_genes <- unique(c(rownames(maEC1_markers), rownames(maEC2_markers)))
+```
+
+```{r}
+
+deg_heatmap <- DoHeatmap(object = endo_labeled_venous, features = differential_genes, label = FALSE)
+dir.create("./data/figures/cxcl12_sort/heatmap/", recursive = TRUE)
+
+ggsave("./data/figures/cxcl12_sort/heatmap/maEC1_maEC2_deg.pdf",
+       deg_heatmap, height = 9, bg = "transparent")
+
+```
+

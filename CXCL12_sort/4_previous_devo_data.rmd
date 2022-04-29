@@ -1,0 +1,293 @@
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/globals.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+devo_endo_full <- SeuratDisk::LoadH5Seurat("/Volumes/data/scSEQ/devo_scseq/data/expot_endo_for_v3.H5Seurat")
+
+```
+
+
+```{r}
+devo_endo <- subset(devo_endo_full, timepoint %in% c("E15", "E18", "P0", "P7"))
+devo_endo <- cluster_pca_umap(devo_endo, k_param = 5, dims_umap = 1:15, dims_neighbors = 1:15, cluster_res = 0.3)
+devo_endo$timepoint <- droplevels(devo_endo$timepoint)
+```
+
+```{r}
+DimPlot(devo_endo)
+```
+
+```{r}
+cluster_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = devo_endo, aes(x = x, y = y, color = celltype), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Celltype", values = color_category_20,
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              plot.title=element_text(size = 18),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+
+dir.create("./data/figures/cxcl12_sort/UMAP/", recursive = TRUE)
+gridExtra::grid.arrange(egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/devo_seq_named_clusters.pdf",
+       egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(7.2, "cm"), height=unit(5, "cm"))
+
+```
+
+
+```{r}
+
+gene_of_interest <- "Alox12"
+alox12_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = devo_endo, aes(x = x, y = y, color = GetAssayData(devo_endo)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=alox12_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/devo_alox12_expression.pdf",
+       egg::set_panel_size(p=alox12_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+
+```{r}
+gene_of_interest <- "Cxcr4"
+Cxcr4_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = devo_endo, aes(x = x, y = y, color = GetAssayData(devo_endo)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=Cxcr4_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/devo_Cxcr4_expression.pdf",
+       egg::set_panel_size(p=Cxcr4_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+gene_of_interest <- "Ackr3"
+Ackr3_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = devo_endo, aes(x = x, y = y, color = GetAssayData(devo_endo)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=Ackr3_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/devo_Ackr3_expression.pdf",
+       egg::set_panel_size(p=Ackr3_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(
+               6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+gene_of_interest <- "Cxcl12"
+Cxcl12_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = devo_endo, aes(x = x, y = y, color = GetAssayData(devo_endo)[gene_of_interest,]), size = .05),
+                           dpi = 600) +
+        scale_color_viridis(name = "Expression", direction = -1) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=14),
+              legend.title=element_text(size=14),
+              axis.title=element_text(size = 14),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent"),
+              plot.title=element_text(face = "italic", size = 18)
+        ) +
+        ylab("UMAP2") + xlab("UMAP1") + ggtitle(gene_of_interest)
+
+gridExtra::grid.arrange(egg::set_panel_size(p=Cxcl12_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/devo_Cxcl12_expression.pdf",
+       egg::set_panel_size(p=Cxcl12_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(
+               6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+celltype_order <- c("Arterial maEC", "Venous maEC", "gCap", "Prolif. gCap", "aCap", "Lymphatic")
+Idents(devo_endo) <- devo_endo$celltype
+```
+
+```{r}
+
+marker_gene <- "Cxcr4"
+heatmap_df <- make_heatmap_df(devo_endo, marker_gene, sort_clusters = FALSE)
+
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E15", "E18", "P0", "P7")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 16) +
+        scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+        scale_size(range = c(1, 12), name = "% expressing") +
+        coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+              plot.title = element_text(face = "italic", size = 18),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.title.y  = element_blank(),
+              axis.text.x = element_text(size = 16, color = "black"),
+              axis.text.y = element_text(size = 16, color = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")
+        ) +
+        labs(x = "Timepoint") +
+        guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+        ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/devo_", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1.1, height = 5, width = 8, bg = "transparent")
+```
+
+```{r}
+
+marker_gene <- "Ackr3"
+heatmap_df <- make_heatmap_df(devo_endo, marker_gene, sort_clusters = FALSE)
+
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E15", "E18", "P0", "P7")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 16) +
+        scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+        scale_size(range = c(1, 12), name = "% expressing") +
+        coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+              plot.title = element_text(face = "italic", size = 18),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.title.y  = element_blank(),
+              axis.text.x = element_text(size = 16, color = "black"),
+              axis.text.y = element_text(size = 16, color = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")
+        ) +
+        labs(x = "Timepoint") +
+        guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+        ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/devo_", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1.1, height = 5, width = 8, bg = "transparent")
+```
+
+```{r}
+
+marker_gene <- "Cxcl12"
+heatmap_df <- make_heatmap_df(devo_endo, marker_gene, sort_clusters = FALSE)
+
+
+heatmap_df_filt <- heatmap_df %>% group_by(gene,cluster, time) %>% summarise(expression_mean=mean(expression),
+                                                                             frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+n_clusters <- max(length(unique(heatmap_df_filt$cluster)))
+
+
+
+all_heatmap <- ggplot(heatmap_df_filt,
+                      aes(x = ordered(time, levels = c("E15", "E18", "P0", "P7")),
+                          y = ordered(cluster, rev(celltype_order)), color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 16) +
+        scale_color_distiller(palette = "Blues", direction = 1, name = "Expression", limits = c(0,max(heatmap_df_filt$expression_mean))) +
+        scale_size(range = c(1, 12), name = "% expressing") +
+        coord_fixed(ratio = 0.4, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(1.5,1,1,1),"cm")) +
+        theme(panel.background = element_rect(fill = "transparent", colour = "black", size = 0.5),
+              plot.title = element_text(face = "italic", size = 18),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank(),
+              axis.title.y  = element_blank(),
+              axis.text.x = element_text(size = 16, color = "black"),
+              axis.text.y = element_text(size = 16, color = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")
+        ) +
+        labs(x = "Timepoint") +
+        guides(size = guide_legend(order = 1, title = 'Percent Expressed'), color = guide_colorbar(order = 2, title = 'Average Expression')) +
+        ggtitle(marker_gene)
+
+all_heatmap
+dir.create("./data/figures/cxcl12_sort/dotplot/", recursive = TRUE)
+ggsave(paste0("./data/figures/cxcl12_sort/dotplot/devo_", marker_gene,"_time_dotplot.pdf"), all_heatmap, scale = 1.1, height = 5, width = 8, bg = "transparent")
+```

@@ -1,0 +1,305 @@
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts
+
+```{r}
+endo <- readRDS("./data/cxcl12_endo_sct.rds")
+```
+
+## Check number of cells at each timepoint
+```{r}
+table(endo$orig.ident)
+```
+Very few at E13, but that is to be expected.
+
+## Preliminary clustering and UMAP
+```{r, fig.width = 12}
+plan("sequential")
+set.seed(42)
+endo <- cluster_pca_umap(endo, k_param = 15, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 0.2)
+cluster_plot <- DimPlot(endo, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+timepoint_plot <- DimPlot(endo, group.by = "orig.ident") + umap_theme() + theme(aspect.ratio = 1)
+
+cluster_plot + timepoint_plot + plot_layout(nrow = 1)
+```
+
+
+
+```{r, fig.width = 12, fig.height = 12}
+cxcl12_plot <- FeaturePlot(endo, "Cxcl12") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+pecam_plot <- FeaturePlot(endo, "Pecam1") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+mki67_plot <- FeaturePlot(endo, "Mki67") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+eln_plot <- FeaturePlot(endo, "Eln") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+cxcl12_plot + pecam_plot + mki67_plot + eln_plot + plot_layout(ncol = 2)
+```
+
+# Identify marker genes in each preliminary cluster
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_cluster_markers.rds"
+if (!file.exists(filename)) {
+  endo_markers <- parallelFindAllMarkers(endo)
+  saveRDS(endo_markers, filename)
+} else {
+  endo_markers <- readRDS(filename)
+}
+```
+
+```{r, results = 'asis'}
+for (i in seq_along(endo_markers)){ # Loop to automatically generate a table for each cluster
+  cat("\n## Cluster ", as.integer(i) - 1, "\n")# Subtract 1 to reconsile Seurat numbering and standard R numbering
+  cat("n-cells = ", nrow(endo_markers[[i]]))
+  print(knitr::kable(endo_markers[[i]][1:40,]) %>% kableExtra::kable_styling())
+  cat('\n')
+}
+```
+
+# Directed assignments
+```{r, fig.width = 12, fig.height = 6}
+endo$timepoint <- endo$orig.ident
+marker_genes <- c("Vwf", "Vcam1", #macrovascular
+                  "Cxcl12", "Pcsk5", #Artearial macrovascular
+                  "Vegfc", "Prss23", #Venous macrovascular
+                  "Gpihbp1", "Kit", # Microvascular
+                  "Flt4", "Ccl21a", # Lymphatic
+                  "Car4", "Kdr", # Car4
+                  "Ephb4", # Vein
+                  "Mki67" # Proliferating miEC
+)
+
+DotPlot(endo, features = marker_genes) +
+        theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+        scale_color_distiller(palette = "Blues", direction = 1)
+```
+
+
+## Relabel, create cellxgene data
+```{r}
+endo_prelim_labels <- endo
+levels(Idents(endo_prelim_labels)) <- c("miEC (Gpihbp1+)",
+                                        "Arterial maEC (Vwf+ Cxcl12+)",
+                                        "Prolif miEC E15 (Gpihbp1+ Mki67+)",
+                                        "Car4+ miEC (Car4+ Kdr+)",
+                                        "Arterial maEC Fbln5+ Eln+ (Vwf+)",
+                                        "Unknown ECs",
+                                        "Prolif miEC E18 (Gpihbp1+ Mki67+)",
+                                        "Unknown E13 Mdk+ Pecam+ Cxcl12+",
+                                        "Lymphatic"
+)
+
+
+filename <- "./cellxgene_data.h5ad"
+if (!file.exists(filename)) { # Create if doesn't exist
+  new_anndata <- anndata::AnnData(X = t(matrix(GetAssayData(endo_prelim_labels, slot = "data", assay = "SCT"),
+                                                          ncol = length(colnames(endo_prelim_labels)),
+                                                          dimnames = list(rownames(endo_prelim_labels), colnames(endo_prelim_labels)))),
+                                  var = data.frame(gene = rownames(endo_prelim_labels),
+                                                   row.names = rownames(endo_prelim_labels)),
+                                  obs = data.frame(celltypes = as.character(Idents(endo_prelim_labels)),
+                                                   louvain = as.character(endo_prelim_labels$seurat_clusters),
+                                                   timepoint = as.character(endo_prelim_labels$timepoint),
+                                                   row.names = colnames(endo_prelim_labels)),
+                                  obsm = list(X_umap = matrix(Embeddings(endo_prelim_labels, reduction = "umap"), ncol = 2))
+  )
+
+
+  new_anndata$write_h5ad("./cellxgene_data.h5ad", compression = "gzip")
+
+  # Need to fix the uns to be a Pandas Series dtype=category for colors
+  # system("python ./fix_anndata.py ./cellxgene_data.h5ad")
+}
+```
+
+
+```{r}
+endo_prelim_labels$name <- Idents(endo_prelim_labels)
+
+plan("sequential")
+set.seed(42)
+endo_prelim_labels <- cluster_pca_umap(endo_prelim_labels, k_param = 15, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 1.2)
+cluster_plot <- DimPlot(endo_prelim_labels, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+timepoint_plot <- DimPlot(endo_prelim_labels, group.by = "orig.ident") + umap_theme() + theme(aspect.ratio = 1)
+
+cluster_plot + timepoint_plot + plot_layout(nrow = 1)
+```
+
+```{r}
+
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/markers_highres_endo.rds"
+if (!file.exists(filename)) {
+  markers <- parallelFindAllMarkers(endo_prelim_labels)
+  saveRDS(markers, filename)
+} else {
+  markers <- readRDS(filename)
+}
+
+wb_markers_names <- levels(Idents(endo_prelim_labels))
+wb_markers <- createWorkbook()
+for (idx in seq_along(wb_markers_names)){
+  addWorksheet(wb_markers, wb_markers_names[idx])
+  writeData(wb_markers, wb_markers_names[idx], markers[[idx]], rowNames = TRUE)
+}
+saveWorkbook(wb_markers, file = "./data/markers_highres_endo.xlsx", overwrite = TRUE)
+
+```
+
+
+```{r}
+filename <- "./cellxgene_data_highres.h5ad"
+if (!file.exists(filename)) { # Create if doesn't exist
+  new_anndata <- anndata::AnnData(X = t(matrix(GetAssayData(endo_prelim_labels, slot = "data", assay = "SCT"),
+                                               ncol = length(colnames(endo_prelim_labels)),
+                                               dimnames = list(rownames(endo_prelim_labels), colnames(endo_prelim_labels)))),
+                                  var = data.frame(gene = rownames(endo_prelim_labels),
+                                                   row.names = rownames(endo_prelim_labels)),
+                                  obs = data.frame(celltypes = as.character(endo_prelim_labels$name),
+                                                   clusters = as.character(Idents(endo_prelim_labels)),
+                                                   timepoint = as.character(endo_prelim_labels$timepoint),
+                                                   row.names = colnames(endo_prelim_labels)),
+                                  obsm = list(X_umap = matrix(Embeddings(endo_prelim_labels, reduction = "umap"), ncol = 2))
+  )
+
+
+  new_anndata$write_h5ad("./cellxgene_data.h5ad", compression = "gzip")
+
+  # Need to fix the uns to be a Pandas Series dtype=category for colors
+  #system("python ./fix_anndata.py ./cellxgene_data.h5ad")
+}
+```
+
+Update labels based on discussion
+
+```{r}
+endo_labeled <- endo_prelim_labels
+endo_labeled <- cluster_pca_umap(endo_labeled, k_param = 15, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 0.2)
+endo_labeled$louvain <- Idents(endo_labeled)
+```
+
+
+```{r}
+marker_genes <- c("Vwf", "Vcam1", #macrovascular
+                  "Gkn3", "Gja5", #Proximal Artery
+                  "Ackr3", "Cxcr4", #Distal Artery
+                  "Alox12", "Gpihbp1", # Microvascular
+                  "Flt4", "Ccl21a", # Lymphatic
+                  "Car4", "Kdr", # Car4
+                  "Mki67" # Proliferating miEC
+)
+
+DotPlot(endo_labeled, features = marker_genes) +
+        theme(axis.text.x = element_text(angle = 45, hjust=1)) +
+        scale_color_distiller(palette = "Blues", direction = 1)
+```
+
+```{r}
+levels(Idents(endo_labeled)) <- c("General Capillaries (gCap)", # 0
+                                  "Distal Arterial Endothelium", # 1
+                                  "Prolif. Capillaries (gCap)", # 2
+                                  "Car4+ Capillaries", # 3
+                                  "Proximal Arterial Endothelium", # 4
+                                  "Unknown / Other", # 5
+                                  "Prolif. Capillaries (gCap)", # 6
+                                  "Early Endothelium", # 7
+                                  "Lymphatic" # 8
+)
+
+endo_labeled$name <- Idents(endo_labeled)
+celltype_order <- c("Proximal Arterial Endothelium",
+                    "Distal Arterial Endothelium",
+                    "General Capillaries (gCap)",
+                    "Prolif. Capillaries (gCap)",
+                    "Car4+ Capillaries",
+                    "Early Endothelium",
+                    "Lymphatic",
+                    "Unknown / Other"
+)
+endo_labeled$name <- ordered(endo_labeled$name, celltype_order)
+```
+
+```{r}
+DimPlot(endo_labeled, group.by = "name")
+```
+
+```{r}
+
+cluster_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = ordered(name, celltype_order)), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Timepoint", values = color_category_20,
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=10),
+              legend.title=element_text(size=10),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+cluster_plot
+
+timepoint_plot <- ggplot() + umap_theme() +
+        ggrastr::rasterise(geom_point(data = endo_labeled, aes(x = x, y = y, color = timepoint), size = .05), dpi = 600) +
+        scale_colour_manual(name = "Timepoint", values = color_category_20,
+                            guide = guide_legend(override.aes = list(size=3), order = 1)) +
+        theme(aspect.ratio=1,
+              legend.text=element_text(size=10),
+              legend.title=element_text(size=10),
+              panel.background = element_rect(fill = "transparent", colour = "black"),
+              plot.background = element_rect(color = "transparent", fill = "transparent")) +
+        ylab("UMAP2") + xlab("UMAP1")
+timepoint_plot
+
+dir.create("./data/figures/cxcl12_sort/UMAP/", recursive = TRUE)
+gridExtra::grid.arrange(egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/named_clusters.pdf",
+       egg::set_panel_size(p=cluster_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(7, "cm"), height=unit(5, "cm"))
+
+gridExtra::grid.arrange(egg::set_panel_size(p=timepoint_plot, width=unit(10, "cm"), height=unit(10, "cm")))
+ggsave("./data/figures/cxcl12_sort/UMAP/timepoints.pdf",
+       egg::set_panel_size(p=timepoint_plot, width=unit(10, "cm"), height=unit(10, "cm")),
+       bg = "transparent",
+       width=unit(6, "cm"), height=unit(5, "cm"))
+
+```
+
+```{r}
+saveRDS(endo_labeled, "./data/2021.11.02_cxcl12_enrich_labeled.rds", compress = "bz2")
+```

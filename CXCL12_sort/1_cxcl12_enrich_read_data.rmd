@@ -1,0 +1,296 @@
+---
+title: "scSEQ analysis of CXCL12+ endothelium"
+author: Nick Negretti
+date: 11/02/21
+output: rmarkdown::github_document
+---
+
+## Load libraries and helper functions
+```{r, results="hide", message = FALSE}
+setwd("~/code/LungVascularDevelopment_github")
+renv::activate("~/code/LungVascularDevelopment_github")
+
+source("./helper_functions/libraries.R")
+
+opts_knit$set(root.dir = getwd())
+
+source("./helper_functions/trajectory.R")
+source("./helper_functions/cluster_scanpy.R")
+source("./helper_functions/colors.R")
+source("./helper_functions/brackets.R")
+source("./helper_functions/heatmaps.R")
+set.seed(42) # For reproducability
+
+N_WORKERS <- 4
+options(future.globals.maxSize=6 *1024*1024^2) # First number is shared object size in GB
+plan("multiprocess", workers = N_WORKERS)
+```
+
+## Load counts and merge
+
+```{r}
+# Cache the results - reload from stored object if alreay complete
+filename <- "./data/cxcl12_merged_notransform.rds"
+if (!file.exists(filename)) {
+  E13_path <- "./data/E13-5/"
+  E15_path <- "./data/E15-5/"
+  E18_path <- "./data/E18-5/"
+  P8_path <- "./data/P8/"
+  CreateSeuratObject(counts = Read10X(data.dir = E13_path), project = "E13")
+  # This is done on one line to reduce the number of redundant objects stored in memory
+  # Project sets 'orig.ident' in the resulting object
+  obj <- Reduce(function(x,y){merge(x,y)}, list(CreateSeuratObject(counts = Read10X(data.dir = E13_path), project = "E13"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = E15_path), project = "E15"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = E18_path), project = "E18"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = P8_path), project = "P8")))
+
+  obj <- PercentageFeatureSet(obj, pattern = "^mt-", col.name = "percent.mt")
+
+  # Filter cells to remove those with high mtRNA and low gene counts
+  obj <- subset(obj, subset = percent.mt < 10 & percent.mt >0.5 & nFeature_RNA >700)
+  saveRDS(obj, filename)
+} else {
+  obj <- readRDS(filename)
+}
+```
+
+## Check number of cells at each timepoint
+```{r}
+table(obj$orig.ident)
+```
+
+# Run SCTransform
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_merged_sct.rds"
+if (!file.exists(filename)) {
+  obj <- SCTransform(obj, variable.features.n = 2000, conserve.memory = TRUE, batch_var = "orig.ident", vars.to.regress = c("percent.mt"),
+                     method = "glmGamPoi")
+  saveRDS(obj, filename)
+} else {
+  obj <- readRDS(filename)
+}
+```
+
+## Preliminary clustering and UMAP
+```{r, fig.width = 12}
+plan("sequential")
+set.seed(42)
+obj <- cluster_pca_umap(obj, k_param = 15, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 0.2)
+cluster_plot <- DimPlot(obj, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+timepoint_plot <- DimPlot(obj, group.by = "orig.ident") + umap_theme() + theme(aspect.ratio = 1)
+
+cluster_plot + timepoint_plot + plot_layout(nrow = 1)
+```
+
+
+
+```{r, fig.width = 12}
+cxcl12_plot <- FeaturePlot(obj, "Cxcl12") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+pecam_plot <- FeaturePlot(obj, "Pecam1") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+cxcl12_plot + pecam_plot + plot_layout(ncol = 2)
+```
+
+# Identify marker genes in each preliminary cluster
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_prelim_cluster_markers.rds"
+if (!file.exists(filename)) {
+  obj_markers <- parallelFindAllMarkers(obj)
+  saveRDS(obj_markers, filename)
+} else {
+  obj_markers <- readRDS(filename)
+}
+```
+
+```{r, results = 'asis'}
+for (i in seq_along(obj_markers)){ # Loop to automatically generate a table for each cluster
+  cat("\n## Cluster ", as.integer(i) - 1, "\n")# Subtract 1 to reconsile Seurat numbering and standard R numbering
+  cat("n-cells = ", nrow(obj_markers[[i]]))
+  print(knitr::kable(obj_markers[[i]][1:40,]) %>% kableExtra::kable_styling())
+  cat('\n')
+}
+```
+
+
+Note. Found evidence of Gm41418 'expression assignment'. This probably isn't real expression, and a result of rRNA contamination. Removing the reads and re-clustering.
+
+# Remove Gm42418 and re-cluster
+```{r}
+dropoutGene <- function(obj, gene){
+  CreateSeuratObject(
+          (GetAssayData(obj, slot = "counts", assay = "RNA")[rownames(GetAssayData(obj, slot = "counts", assay = "RNA")) != gene,]),
+          project = "CreateSeuratObject",
+          assay = "RNA",
+          meta.data = obj@meta.data,
+          min.cells = 1
+  )
+}
+
+# Cache the results - reload from stored object if alreay complete
+filename <- "./data/cxcl12_merged_notransform_rmGm42418.rds"
+if (!file.exists(filename)) {
+  E13_path <- "./data/E13-5/"
+  E15_path <- "./data/E15-5/"
+  E18_path <- "./data/E18-5/"
+  P8_path <- "./data/P8/"
+  CreateSeuratObject(counts = Read10X(data.dir = E13_path), project = "E13")
+  # This is done on one line to reduce the number of redundant objects stored in memory
+  # Project sets 'orig.ident' in the resulting object
+  obj <- Reduce(function(x,y){merge(x,y)}, list(CreateSeuratObject(counts = Read10X(data.dir = E13_path), project = "E13"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = E15_path), project = "E15"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = E18_path), project = "E18"),
+                                                CreateSeuratObject(counts = Read10X(data.dir = P8_path), project = "P8")))
+  obj <- dropoutGene(obj, "Gm42418")
+  obj <- PercentageFeatureSet(obj, pattern = "^mt-", col.name = "percent.mt")
+
+  # Filter cells to remove those with high mtRNA and low gene counts
+  obj <- subset(obj, subset = percent.mt < 10 & percent.mt >0.5 & nFeature_RNA >700)
+  saveRDS(obj, filename)
+} else {
+  obj <- readRDS(filename)
+}
+```
+
+
+
+
+## Check number of cells at each timepoint
+```{r}
+table(obj$orig.ident)
+```
+
+# Run SCTransform
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_merged_sct_noGm42418.rds"
+if (!file.exists(filename)) {
+  obj <- SCTransform(obj, variable.features.n = 2000, conserve.memory = TRUE, batch_var = "orig.ident", vars.to.regress = c("percent.mt"),
+                     method = "glmGamPoi")
+  saveRDS(obj, filename)
+} else {
+  obj <- readRDS(filename)
+}
+```
+
+## Preliminary clustering and UMAP
+```{r, fig.width = 12}
+plan("sequential")
+set.seed(42)
+obj <- cluster_pca_umap(obj, k_param = 15, dims_umap = 1:25, dims_neighbors = 1:25, cluster_res = 0.2)
+cluster_plot <- DimPlot(obj, label = TRUE) + umap_theme() + theme(aspect.ratio = 1)
+timepoint_plot <- DimPlot(obj, group.by = "orig.ident") + umap_theme() + theme(aspect.ratio = 1)
+
+cluster_plot + timepoint_plot + plot_layout(nrow = 1)
+```
+
+Integration looks a little bit better after data cleanup
+
+
+```{r, fig.width = 12}
+cxcl12_plot <- FeaturePlot(obj, "Cxcl12") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+pecam_plot <- FeaturePlot(obj, "Pecam1") + featureplot_theme() +
+        theme(aspect.ratio=1) +
+        scale_color_viridis(name = "Expression", direction = -1)
+
+cxcl12_plot + pecam_plot + plot_layout(ncol = 2)
+```
+
+# Identify marker genes in each preliminary cluster
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_noGm42418_prelim_cluster_markers.rds"
+if (!file.exists(filename)) {
+  obj_markers <- parallelFindAllMarkers(obj)
+  saveRDS(obj_markers, filename)
+} else {
+  obj_markers <- readRDS(filename)
+}
+```
+
+## Directed assignments
+```{r, fig.width = 8, fig.height = 12}
+obj$timepoint <- obj$orig.ident
+marker_genes <- c("Vwf", "Vcam1", #macrovascular
+                  "Cxcl12", "Pcsk5", #Artearial macrovascular
+                  "Vegfc", "Prss23", #Venous macrovascular
+                  "Gpihbp1", "Kit", # Microvascular
+                  "Flt4", "Ccl21a", # Lymphatic
+                  "Car4", "Kdr", # Car4
+                  "Ephb4", # Vein
+                  "Mki67" # Proliferating miEC
+)
+
+
+heatmap_df <- make_heatmap_df(obj, marker_genes, sort_clusters = FALSE)
+
+heatmap_df <- heatmap_df %>% group_by(gene,cluster) %>% summarise(expression_mean=mean(expression),
+                                                                  frac_pos=(sum(expression > 0) * 100 / length(expression)))
+
+# For brackets and text (see ./helper_functions/brackets.R)
+n_clusters <- max(as.numeric(Idents(obj)))
+text_vec <- list(c("maEC", 2),
+                 c("Arterial maEC", 2),
+                 c("Venous maEC", 2),
+                 c("Microvascular", 2),
+                 c("Lymphatic", 2),
+                 c("Car4+", 2),
+                 c("Venous", 1),
+                 c("Prolif.", 1)
+)
+
+obj_heatmap <- ggplot(heatmap_df, aes(x = gene, y = cluster, color = expression_mean, size = frac_pos)) +
+        geom_point(shape = 15) +
+        scale_size(range = c(1, 10), name = "% expressing") +
+        scale_color_distiller(palette = "Blues", direction = 1, trans = "sqrt", name = "Expression") +
+        coord_fixed(ratio = 1, xlim = NULL, ylim = c(1,n_clusters), expand = TRUE, clip = "off") +
+        theme(plot.margin=unit(c(2,1,1,1),"cm")) +
+        addBrackets(text_vec) +
+        addText(text_vec, n_clusters) +
+        theme(panel.background = element_rect(fill = "white", colour = "black", size = 0),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              axis.title.x  = element_blank()) +
+        labs(y = "Cluster") +
+        theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+obj_heatmap
+```
+
+```{r, results = 'asis'}
+for (i in seq_along(obj_markers)){ # Loop to automatically generate a table for each cluster
+  cat("\n## Cluster ", as.integer(i) - 1, "\n")# Subtract 1 to reconsile Seurat numbering and standard R numbering
+  cat("n-cells = ", nrow(obj_markers[[i]]))
+  print(knitr::kable(obj_markers[[i]][1:40,]) %>% kableExtra::kable_styling())
+  cat('\n')
+}
+```
+
+
+# Keep endothelium for further analysis
+```{r}
+# Dropping: 1, 3, 5, 9, 10, 14, 15
+endo <- subset(obj, idents = c(0, 2, 4, 6, 7, 8, 11, 12))
+```
+
+## Retransform the endothelium
+```{r}
+plan("multiprocess", workers = N_WORKERS)
+filename <- "./data/cxcl12_endo_sct.rds"
+if (!file.exists(filename)) {
+  obj <- SCTransform(endo, variable.features.n = 2000, conserve.memory = TRUE, batch_var = "orig.ident", vars.to.regress = c("percent.mt"),
+                     method = "glmGamPoi")
+  saveRDS(endo, filename)
+} else {
+  endo <- readRDS(filename)
+}
+```
